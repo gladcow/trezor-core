@@ -442,6 +442,15 @@ async def sign_tx(tx: SignTx, keychain: seed.Keychain):
                 writers.write_uint32(h_sign, tx.expiry)  # expiryHeight
                 writers.write_varint(h_sign, 0)  # nJoinSplit
 
+            # add extra data to hash_writer
+            # STAGE_REQUEST_4_EXTRADATA
+            ofs = 0
+            while ofs < tx.extra_data_len:
+                size = min(1024, tx.extra_data_len - ofs)
+                data = await helpers.request_tx_extra_data(tx_req, ofs, size)
+                writers.write_bytes(h_sign, data)
+                ofs += len(data)
+
             writers.write_uint32(h_sign, get_hash_type(coin))
 
             # check the control digests
@@ -454,7 +463,6 @@ async def sign_tx(tx: SignTx, keychain: seed.Keychain):
             if txi_sign.multisig:
                 multisig.multisig_pubkey_index(txi_sign.multisig, key_sign_pub)
 
-            # compute the signature from the tx digest
             signature = ecdsa_sign(
                 key_sign, writers.get_tx_hash(h_sign, double=coin.sign_hash_double)
             )
@@ -563,6 +571,18 @@ async def sign_tx(tx: SignTx, keychain: seed.Keychain):
                 FailureType.DataError,
                 "Unsupported version for overwintered transaction",
             )
+
+    # add extra data to serialized tx
+    # STAGE_REQUEST_5_EXTRADATA
+    ofs = 0
+    while ofs < tx.extra_data_len:
+        size = min(1024, tx.extra_data_len - ofs)
+        tx_req.serialized = tx_ser
+        data = await helpers.request_tx_extra_data(tx_req, ofs, size)
+        tx_ser.serialized_tx = bytearray()
+        writers.write_bytes(tx_ser.serialized_tx, data)
+        ofs += len(data)
+    tx_req.serialized = tx_ser
 
     await helpers.request_tx_finish(tx_req)
 
