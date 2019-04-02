@@ -16,6 +16,7 @@ from trezor.messages.TxRequestSerializedType import TxRequestSerializedType
 from apps.common import address_type, coininfo, coins, seed
 from apps.wallet.sign_tx import (
     addresses,
+    dash,
     decred,
     helpers,
     multisig,
@@ -203,6 +204,15 @@ async def check_tx_fee(tx: SignTx, keychain: seed.Keychain):
     if tx.lock_time > 0:
         if not await helpers.confirm_nondefault_locktime(tx.lock_time):
             raise SigningError(FailureType.ActionCancelled, "Locktime cancelled")
+
+    if dash.is_dip2_tx(tx):
+        # request DIP2 extra payload
+        data_to_confirm = await dash.request_dip2_extra_payload(tx_req)
+        # confirm extra data content
+        if not await dash.confirm_dip2_tx_payload(data_to_confirm):
+            raise SigningError(FailureType.ActionCancelled, "Output cancelled")
+        # add extra_data to hash
+        writers.write_bytes(h_first, bytes(data_to_confirm))
 
     if not await helpers.confirm_total(total_in - change_out, fee, coin):
         raise SigningError(FailureType.ActionCancelled, "Total cancelled")
@@ -448,6 +458,13 @@ async def sign_tx(tx: SignTx, keychain: seed.Keychain):
                 writers.write_uint32(h_sign, tx.expiry)  # expiryHeight
                 writers.write_varint(h_sign, 0)  # nJoinSplit
 
+            if dash.is_dip2_tx(tx):
+                # request DIP2 extra payload
+                data_to_confirm = await dash.request_dip2_extra_payload(tx_req)
+                # add extra_data to hash
+                writers.write_bytes(h_second, bytes(data_to_confirm))
+                writers.write_bytes(h_sign, bytes(data_to_confirm))
+
             writers.write_uint32(h_sign, get_hash_type(coin))
 
             # check the control digests
@@ -569,6 +586,15 @@ async def sign_tx(tx: SignTx, keychain: seed.Keychain):
                 FailureType.DataError,
                 "Unsupported version for overwintered transaction",
             )
+
+    if dash.is_dip2_tx(tx):
+        # request DIP2 extra payload
+        tx_req.serialized = tx_ser
+        data_to_confirm = await dash.request_dip2_extra_payload(tx_req)
+        # add extra_data to serialized tx
+        tx_ser.serialized_tx = bytearray()
+        writers.write_bytes(tx_ser.serialized_tx, bytes(data_to_confirm))
+        tx_req.serialized = tx_ser
 
     await helpers.request_tx_finish(tx_req)
 
