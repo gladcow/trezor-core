@@ -56,6 +56,9 @@ async def sign_tx(ctx, msg, keychain):
         elif isinstance(req, dash.UIConfirmPayload):
             res = await dash.confirm_payload(ctx, req.payload)
             progress.report_init()
+        elif isinstance(req, dash.UIConfirmTxType):
+            res = await dash.confirm_txtype(ctx, req.txtype)
+            progress.report_init()
         else:
             raise TypeError("Invalid signing instruction")
     return req
