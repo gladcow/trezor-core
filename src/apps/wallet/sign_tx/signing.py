@@ -209,8 +209,7 @@ async def check_tx_fee(tx: SignTx, keychain: seed.Keychain):
         # request DIP2 extra payload
         data_to_confirm = await dash.request_dip2_extra_payload(tx_req)
         # confirm extra data content
-        if not await dash.confirm_dip2_tx_payload(data_to_confirm):
-            raise SigningError(FailureType.ActionCancelled, "Output cancelled")
+        await dash.confirm_dip2_tx_payload(data_to_confirm, dash.dip2_tx_type(tx), dash.is_testnet(tx))
         # add extra_data to hash
         writers.write_bytes(h_first, bytes(data_to_confirm))
 

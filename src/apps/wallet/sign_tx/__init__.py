@@ -53,11 +53,8 @@ async def sign_tx(ctx, msg, keychain):
         elif isinstance(req, helpers.UiConfirmForeignAddress):
             res = await paths.show_path_warning(ctx, req.address_n)
             progress.report_init()
-        elif isinstance(req, dash.UIConfirmPayload):
-            res = await dash.confirm_payload(ctx, req.payload)
-            progress.report_init()
-        elif isinstance(req, dash.UIConfirmTxType):
-            res = await dash.confirm_txtype(ctx, req.txtype)
+        elif isinstance(req, dash.UIConfirmTxDetail):
+            res = await dash.confirm_tx_detail(ctx, req.title, req.data)
             progress.report_init()
         else:
             raise TypeError("Invalid signing instruction")
