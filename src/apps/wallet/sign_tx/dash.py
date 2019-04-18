@@ -122,6 +122,18 @@ def _address_from_script(data: bytes, testnet: bool) -> str:
     raise ProcessError("Unsupported payout script type")
 
 
+def _revoke_reason(idx: int) -> str:
+    if idx == 0:
+        return "Not Specified"
+    elif idx == 1:
+        return "Termination of Service"
+    elif idx == 2:
+        return "Compromised Keys"
+    elif idx == 3:
+        return "Change of Keys (Not compromised)"
+    return "Unknown revoke reason ({})".format(idx)
+
+
 async def request_dip2_extra_payload(tx_req):
     # if it is Dash Special Tx it has at least 4 (max varint size) bytes
     # extra data, so we can request it
@@ -310,7 +322,16 @@ class SpecialTx:
         self.confirmations.extend([("Payout address", payout_address)])
 
     def _parse_pro_up_rev_tx(self, data, position):
-        pass
+        version = unpack("<H", data[position:position + 2])[0]
+        if not version == 1:
+            raise ProcessError("Unknown Dash Provider Update Registrar format version")
+        position += 2
+        initial_proregtx = _to_hex(reversed(data[position:position + 32]))
+        position += 32
+        self.confirmations.extend([("Initial ProRegTx", initial_proregtx)])
+        reason = unpack("<H", data[position:position + 2])[0]
+        position += 2
+        self.confirmations.extend([("Revoke reason", _revoke_reason(reason))])
 
     def _parse_cb_tx(self, data, position):
         pass
