@@ -88,22 +88,16 @@ def _addr_from_sh(data: bytes, testnet: bool) -> str:
 
 def _is_p2pkh_script(data: bytes) -> bool:
     if not len(data) == 25:
-        print("data len: ", len(data))
         return False
     if not data[0] == 0x76:
-        print("data[0]: ", data[0])
         return False
     if not data[1] == 0xa9:
-        print("data[1]: ", data[1])
         return False
     if not data[2] == 0x14:
-        print("data[2]: ", data[2])
         return False
     if not data[-1] == 0xac:
-        print("data[-1]: ", data[-1])
         return False
     if not data[-2] == 0x88:
-        print("data[-2]: ", data[-2])
         return False
     return True
 
@@ -121,7 +115,6 @@ def _is_p2sh_script(data: bytes) -> bool:
 
 
 def _address_from_script(data: bytes, testnet: bool) -> str:
-    print("Script: ", _to_hex(data))
     if _is_p2pkh_script(data):
         return _addr_from_keyid(data[3:23], testnet)
     if _is_p2sh_script(data):
@@ -265,7 +258,28 @@ class SpecialTx:
         self.confirmations.extend([("Payout address", payout_address)])
 
     def _parse_pro_up_serv_tx(self, data, position):
-        pass
+        version = unpack("<H", data[position:position + 2])[0]
+        if not version == 1:
+            raise ProcessError("Unknown Dash Provider Update Service format version")
+        position += 2
+        initial_proregtx = _to_hex(reversed(data[position:position + 32]))
+        position += 32
+        self.confirmations.extend([("Initial ProRegTx", initial_proregtx)])
+        ip = _inet_ntoa(data[position:position+16])
+        position += 16
+        port = unpack(">H", data[position:position+2])[0]
+        position += 2
+        self.confirmations.extend([("Address and port",
+                                    "{}:{}".format(ip, port))])
+        varint_size = _varint_size(data[position:position + 8])
+        payout_script_size = _unpack_varint(data[position:position + varint_size])
+        position += varint_size
+        if payout_script_size == 0:
+            payout_address = "Empty"
+        else:
+            payout_address = _address_from_script(data[position:position + payout_script_size], self.testnet)
+        position += payout_script_size
+        self.confirmations.extend([("Payout address", payout_address)])
 
     def _parse_pro_up_reg_tx(self, data, position):
         pass
