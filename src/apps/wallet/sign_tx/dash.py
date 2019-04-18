@@ -282,7 +282,32 @@ class SpecialTx:
         self.confirmations.extend([("Payout address", payout_address)])
 
     def _parse_pro_up_reg_tx(self, data, position):
-        pass
+        version = unpack("<H", data[position:position + 2])[0]
+        if not version == 1:
+            raise ProcessError("Unknown Dash Provider Update Registrar format version")
+        position += 2
+        initial_proregtx = _to_hex(reversed(data[position:position + 32]))
+        position += 32
+        self.confirmations.extend([("Initial ProRegTx", initial_proregtx)])
+        mode = unpack("<H", data[position:position + 2])[0]
+        position += 2
+        self.confirmations.extend([("Masternode mode",
+                                    "Mode: {}".format(mode))])
+        self.confirmations.extend([("Operator Public Key",
+                                    _to_hex(data[position:position + 48]))])
+        position += 48
+        voting_address = _addr_from_keyid(data[position:position + 20], self.testnet)
+        position += 20
+        self.confirmations.extend([("Voting address", voting_address)])
+        varint_size = _varint_size(data[position:position + 8])
+        payout_script_size = _unpack_varint(data[position:position + varint_size])
+        position += varint_size
+        if payout_script_size == 0:
+            payout_address = "Empty"
+        else:
+            payout_address = _address_from_script(data[position:position + payout_script_size], self.testnet)
+        position += payout_script_size
+        self.confirmations.extend([("Payout address", payout_address)])
 
     def _parse_pro_up_rev_tx(self, data, position):
         pass
