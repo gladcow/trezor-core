@@ -334,22 +334,22 @@ class SpecialTx:
         self.confirmations.extend([("Revoke reason", _revoke_reason(reason))])
 
     def _parse_cb_tx(self, data, position):
-        pass
+        raise ProcessError("Unsupported Dash DIP3 transaction type")
 
     def _parse_qm_tx(self, data, position):
-        pass
+        raise ProcessError("Unsupported Dash DIP3 transaction type")
 
     def _parse_bu_reg_tx(self, data, position):
-        pass
+        raise ProcessError("Unsupported Dash DIP3 transaction type")
 
     def _parse_bu_credit_tx(self, data, position):
-        pass
+        raise ProcessError("Unsupported Dash DIP3 transaction type")
 
     def _parse_bu_reset_tx(self, data, position):
-        pass
+        raise ProcessError("Unsupported Dash DIP3 transaction type")
 
     def _parse_bu_close_tx(self, data, position):
-        pass
+        raise ProcessError("Unsupported Dash DIP3 transaction type")
 
 
 async def confirm_tx_detail(ctx, title, data):
