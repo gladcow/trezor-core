@@ -95,6 +95,8 @@ async def check_tx_fee(tx: SignTx, keychain: seed.Keychain):
     tx_req = TxRequest()
     tx_req.details = TxRequestDetailsType()
 
+    if dash.is_dip2_tx(tx):
+        h_inputs = utils.HashWriter(sha256())
     for i in range(tx.inputs_count):
         progress.advance()
         # STAGE_REQUEST_1_INPUT
@@ -104,6 +106,9 @@ async def check_tx_fee(tx: SignTx, keychain: seed.Keychain):
         weight.add_input(txi)
         hash143.add_prevouts(txi)  # all inputs are included (non-segwit as well)
         hash143.add_sequence(txi)
+        if dash.is_dip2_tx(tx):
+            writers.write_bytes_reversed(h_inputs, txi.prev_hash)
+            writers.write_uint32(h_inputs, txi.prev_index)
 
         if not addresses.validate_full_path(txi.address_n, coin, txi.script_type):
             await helpers.confirm_foreign_address(txi.address_n)
@@ -209,7 +214,7 @@ async def check_tx_fee(tx: SignTx, keychain: seed.Keychain):
         # request DIP2 extra payload
         data_to_confirm = await dash.request_dip2_extra_payload(tx_req)
         # confirm extra data content
-        await dash.confirm_dip2_tx_payload(data_to_confirm, dash.dip2_tx_type(tx), dash.is_testnet(tx))
+        await dash.confirm_dip2_tx_payload(data_to_confirm, tx, h_inputs.get_digest())
         # add extra_data to hash
         writers.write_bytes(h_first, bytes(data_to_confirm))
 

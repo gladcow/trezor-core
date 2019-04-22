@@ -28,11 +28,11 @@ def is_dip2_tx(tx):
     return (version is 3) and (dip2_type > 0)
 
 
-def dip2_tx_type(tx):
+def _dip2_tx_type(tx):
     return tx.version >> 16
 
 
-def is_testnet(tx):
+def _is_testnet(tx):
     return "test" in tx.coin_name.lower()
 
 
@@ -162,7 +162,7 @@ class UIConfirmTxDetail:
 
 
 class SpecialTx:
-    def __init__(self, data: bytes, dip2_type, testnet: bool):
+    def __init__(self, data: bytes, dip2_type, testnet: bool, inputs_hash: bytes):
         self.payload = data
         position = 0
         # check payload size
@@ -174,6 +174,7 @@ class SpecialTx:
         position += varint_size
         self.type = dip2_type
         self.testnet = testnet
+        self.inputs_hash = inputs_hash
         self.confirmations = []
         self._parse(data, position)
 
@@ -235,7 +236,7 @@ class SpecialTx:
         position += 2
         self.confirmations.extend([("Masternode type",
                                     "Type: {}, mode: {}".format(mntype, mode))])
-        collateral_id = _to_hex(data[position:position + 32])
+        collateral_id = _to_hex(reversed(data[position:position + 32]))
         position += 32
         collateral_out = unpack('<I', data[position:position + 4])[0]
         position += 4
@@ -268,6 +269,9 @@ class SpecialTx:
         payout_address = _address_from_script(data[position:position + payout_script_size], self.testnet)
         position += payout_script_size
         self.confirmations.extend([("Payout address", payout_address)])
+        if bytes(reversed(data[position:position + 32])) != self.inputs_hash:
+            raise ProcessError("Invalid inputs hash in DIP2 transaction")
+        position += 32
 
     def _parse_pro_up_serv_tx(self, data, position):
         version = unpack("<H", data[position:position + 2])[0]
@@ -292,6 +296,9 @@ class SpecialTx:
             payout_address = _address_from_script(data[position:position + payout_script_size], self.testnet)
         position += payout_script_size
         self.confirmations.extend([("Payout address", payout_address)])
+        if bytes(reversed(data[position:position + 32])) != self.inputs_hash:
+            raise ProcessError("Invalid inputs hash in DIP2 transaction")
+        position += 32
 
     def _parse_pro_up_reg_tx(self, data, position):
         version = unpack("<H", data[position:position + 2])[0]
@@ -320,6 +327,9 @@ class SpecialTx:
             payout_address = _address_from_script(data[position:position + payout_script_size], self.testnet)
         position += payout_script_size
         self.confirmations.extend([("Payout address", payout_address)])
+        if bytes(reversed(data[position:position + 32])) != self.inputs_hash:
+            raise ProcessError("Invalid inputs hash in DIP2 transaction")
+        position += 32
 
     def _parse_pro_up_rev_tx(self, data, position):
         version = unpack("<H", data[position:position + 2])[0]
@@ -332,6 +342,9 @@ class SpecialTx:
         reason = unpack("<H", data[position:position + 2])[0]
         position += 2
         self.confirmations.extend([("Revoke reason", _revoke_reason(reason))])
+        if bytes(reversed(data[position:position + 32])) != self.inputs_hash:
+            raise ProcessError("Invalid inputs hash in DIP2 transaction")
+        position += 32
 
     def _parse_cb_tx(self, data, position):
         raise ProcessError("Unsupported Dash DIP3 transaction type")
@@ -358,8 +371,10 @@ async def confirm_tx_detail(ctx, title, data):
     return await require_confirm(ctx, text, ButtonRequestType.SignTx)
 
 
-def confirm_dip2_tx_payload(data, dip2_type, testnet):
-    tx = SpecialTx(data, dip2_type, testnet)
+def confirm_dip2_tx_payload(data, tx, inputs_hash):
+    dip2_type = _dip2_tx_type(tx)
+    testnet = _is_testnet(tx)
+    tx = SpecialTx(data, dip2_type, testnet, inputs_hash)
     yield UIConfirmTxDetail("Confirm this is", tx.tx_name())
     for c in tx.confirmations:
         yield UIConfirmTxDetail(c[0], c[1])
