@@ -19,15 +19,6 @@ from apps.wallet.sign_tx import (
 VAR_INT_MAX_SIZE = 8
 
 
-def is_dip2_tx(tx):
-    if not tx.coin_name.lower().startswith("dash"):
-        return False
-    version = tx.version
-    dip2_type = version >> 16
-    version &= 0xffff
-    return (version is 3) and (dip2_type > 0)
-
-
 def _dip2_tx_type(tx):
     return tx.version >> 16
 
@@ -122,6 +113,7 @@ def _address_from_script(data: bytes, testnet: bool) -> str:
     raise ProcessError("Unsupported payout script type")
 
 
+# masternode registration revoke reason for user confirmation
 def _revoke_reason(idx: int) -> str:
     if idx == 0:
         return "Not Specified"
@@ -131,26 +123,8 @@ def _revoke_reason(idx: int) -> str:
         return "Compromised Keys"
     elif idx == 3:
         return "Change of Keys (Not compromised)"
+    # no error here, this reason is used only for information
     return "Unknown revoke reason ({})".format(idx)
-
-
-async def request_dip2_extra_payload(tx_req):
-    # if it is Dash Special Tx it has at least 4 (max varint size) bytes
-    # extra data, so we can request it
-    size = VAR_INT_MAX_SIZE
-    ofs = 0
-    data = await helpers.request_tx_extra_data(tx_req, ofs, size)
-    # calc full extra data size
-    extra_len = _varint_size(data) + _unpack_varint(data)
-    # request remaining extra data
-    ofs = VAR_INT_MAX_SIZE
-    data_to_confirm = bytearray(data)
-    while ofs < extra_len:
-        size = min(1024, extra_len - ofs)
-        data = await helpers.request_tx_extra_data(tx_req, ofs, size)
-        data_to_confirm.extend(data)
-        ofs += len(data)
-    return data_to_confirm
 
 
 class UIConfirmTxDetail:
@@ -161,6 +135,7 @@ class UIConfirmTxDetail:
     __eq__ = obj_eq
 
 
+# This class is used to parse specific transaction details
 class SpecialTx:
     def __init__(self, data: bytes, dip2_type, testnet: bool, inputs_hash: bytes):
         self.payload = data
@@ -371,6 +346,36 @@ async def confirm_tx_detail(ctx, title, data):
     return await require_confirm(ctx, text, ButtonRequestType.SignTx)
 
 
+# Used to check if this transaction requires special processing
+def is_dip2_tx(tx):
+    if not tx.coin_name.lower().startswith("dash"):
+        return False
+    version = tx.version
+    dip2_type = version >> 16
+    version &= 0xffff
+    return (version is 3) and (dip2_type > 0)
+
+
+async def request_dip2_extra_payload(tx_req):
+    # if it is Dash Special Tx it has at least 8 (max varint size) bytes
+    # extra data, so we can request it
+    size = VAR_INT_MAX_SIZE
+    ofs = 0
+    data = await helpers.request_tx_extra_data(tx_req, ofs, size)
+    # calc full extra data size
+    extra_len = _varint_size(data) + _unpack_varint(data)
+    # request remaining extra data
+    ofs = VAR_INT_MAX_SIZE
+    data_to_confirm = bytearray(data)
+    while ofs < extra_len:
+        size = min(1024, extra_len - ofs)
+        data = await helpers.request_tx_extra_data(tx_req, ofs, size)
+        data_to_confirm.extend(data)
+        ofs += len(data)
+    return data_to_confirm
+
+
+# Used to explicitly verify or to confirm by user all specific transaction details
 def confirm_dip2_tx_payload(data, tx, inputs_hash):
     dip2_type = _dip2_tx_type(tx)
     testnet = _is_testnet(tx)
