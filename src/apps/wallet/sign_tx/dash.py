@@ -5,6 +5,7 @@ from trezor.ui.text import Text
 from trezor.utils import obj_eq
 from trezor.wire import ProcessError
 from trezor.crypto.base58 import encode_check
+from trezor.crypto.curve import secp256k1
 
 from apps.common.confirm import (
     require_confirm,
@@ -145,7 +146,6 @@ class SpecialTx:
         payload_size = _unpack_varint(data[position:position + varint_size])
         if len(data) != varint_size + payload_size:
             raise ProcessError("Invalid Dash DIP2 extra payload size")
-        # get tx type
         position += varint_size
         self.type = dip2_type
         self.testnet = testnet
@@ -215,8 +215,12 @@ class SpecialTx:
         position += 32
         collateral_out = unpack('<I', data[position:position + 4])[0]
         position += 4
-        self.confirmations.extend([("External collateral",
-                                    "{}:{}".format(collateral_id, collateral_out))])
+        empty_collateral = all(c == "0" for c in collateral_id)
+        if empty_collateral:
+            self.confirmations.extend([("External collateral", "Empty")])
+        else:
+            self.confirmations.extend([("External collateral",
+                                        "{}:{}".format(collateral_id, collateral_out))])
         ip = _inet_ntoa(data[position:position+16])
         position += 16
         port = unpack(">H", data[position:position+2])[0]
@@ -247,6 +251,26 @@ class SpecialTx:
         if bytes(reversed(data[position:position + 32])) != self.inputs_hash:
             raise ProcessError("Invalid inputs hash in DIP2 transaction")
         position += 32
+        varint_size = _varint_size(data[position:position + 8])
+        payload_sig_size = _unpack_varint(data[position:position + varint_size])
+        position += varint_size
+        if position + payload_sig_size != len(data):
+            raise ProcessError("Invalid payload signature size")
+        if empty_collateral and payload_sig_size > 0:
+            raise ProcessError("Empty collateral and not empty payload signature")
+        if not empty_collateral and payload_sig_size == 0:
+            raise ProcessError("No payload signature for external collateral")
+        if payload_sig_size > 0:
+            payload_sig = data[position:position + payload_sig_size]
+            digest = self._get_proregtx_digest()
+            key_from_sig = secp256k1.verify_recover(payload_sig, digest)
+            if not key_from_sig:
+                raise ProcessError("Invalid payload signature")
+            address_from_sig = _address_from_pubkey(key_from_sig)
+            address_from_txout = _address_from_txout(collateral_out)
+            if address_from_sig != address_from_txout:
+                raise ProcessError("Invalid payload signature")
+
 
     def _parse_pro_up_serv_tx(self, data, position):
         version = unpack("<H", data[position:position + 2])[0]
