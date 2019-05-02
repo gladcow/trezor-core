@@ -213,8 +213,11 @@ async def check_tx_fee(tx: SignTx, keychain: seed.Keychain):
     if dash.is_dip2_tx(tx):
         # request DIP2 extra payload
         data_to_confirm = await dash.request_dip2_extra_payload(tx_req)
+        # inputs hash should be double-sha256 hash
+        h_double = utils.HashWriter(sha256())
+        writers.write_bytes(h_double, h_inputs.get_digest())
         # confirm extra data content
-        await dash.confirm_dip2_tx_payload(data_to_confirm, tx, h_inputs.get_digest())
+        await dash.confirm_dip2_tx_payload(data_to_confirm, tx, h_double.get_digest())
         # add extra_data to hash
         writers.write_bytes(h_first, bytes(data_to_confirm))
 
