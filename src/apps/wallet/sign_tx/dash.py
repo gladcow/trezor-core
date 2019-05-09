@@ -1,4 +1,5 @@
 from ustruct import unpack
+from ubinascii import unhexlify
 from trezor import ui
 from trezor.messages import ButtonRequestType
 from trezor.ui.text import Text
@@ -6,6 +7,13 @@ from trezor.utils import obj_eq
 from trezor.wire import ProcessError
 from trezor.crypto.base58 import encode_check
 from trezor.crypto.curve import secp256k1
+from trezor.crypto.hashlib import ripemd160, sha256
+from apps.common.signverify import message_digest
+from trezor.messages.TxOutputBinType import TxOutputBinType
+from trezor.messages.TxOutputType import TxOutputType
+from trezor.messages.TxRequest import TxRequest
+from trezor.messages.TxRequestDetailsType import TxRequestDetailsType
+from apps.common import coininfo, coins
 
 from apps.common.confirm import (
     require_confirm,
@@ -32,22 +40,22 @@ def _varint_size(data: bytes):
     size = 1
     nit = unpack("<B", data[0:1])[0]
     if nit == 253:
-        size = 2
+        size += 2
     elif nit == 254:
-        size = 4
+        size += 4
     elif nit == 255:
-        size = 8
+        size += 8
     return size
 
 
 def _unpack_varint(data: bytes):
     nit = unpack("<B", data[0:1])[0]
     if nit == 253:
-        nit = unpack("<H", data[0:2])[0]
+        nit = unpack("<H", data[1:3])[0]
     elif nit == 254:
-        nit = unpack("<I", data[0:4])[0]
+        nit = unpack("<I", data[1:5])[0]
     elif nit == 255:
-        nit = unpack("<Q", data[0:8])[0]
+        nit = unpack("<Q", data[1:9])[0]
     return nit
 
 
@@ -67,6 +75,12 @@ def _addr_from_keyid(data: bytes, testnet: bool) -> str:
         prefix = b'\x4c'
     addr_data = prefix + data[0:20]
     return encode_check(addr_data)
+
+
+def _addr_from_pubkey(data: bytes, testnet:bool) ->str:
+    keyid = ripemd160(sha256(data).digest()).digest()
+    print("KeyID :", _to_hex(keyid))
+    return _addr_from_keyid(keyid, testnet)
 
 
 def _addr_from_sh(data: bytes, testnet: bool) -> str:
@@ -114,6 +128,13 @@ def _address_from_script(data: bytes, testnet: bool) -> str:
     raise ProcessError("Unsupported payout script type")
 
 
+async def _addr_from_txout(tx_id: str, tx_out: int, testnet: bool) -> str:
+    tx_req = TxRequest()
+    tx_req.details = TxRequestDetailsType()
+    txo = await helpers.request_tx_output(tx_req, tx_out, unhexlify(tx_id))
+    return _address_from_script(txo.script_pubkey, testnet)
+
+
 # masternode registration revoke reason for user confirmation
 def _revoke_reason(idx: int) -> str:
     if idx == 0:
@@ -138,20 +159,21 @@ class UIConfirmTxDetail:
 
 # This class is used to parse specific transaction details
 class SpecialTx:
-    def __init__(self, data: bytes, dip2_type, testnet: bool, inputs_hash: bytes):
+    def __init__(self, data: bytes, dip2_type, testnet: bool, coin: coininfo, inputs_hash: bytes):
+        self.coin = coin
         self.payload = data
-        position = 0
+        self.position = 0
         # check payload size
         varint_size = _varint_size(data)
-        payload_size = _unpack_varint(data[position:position + varint_size])
+        payload_size = _unpack_varint(data[self.position:self.position + varint_size])
         if len(data) != varint_size + payload_size:
             raise ProcessError("Invalid Dash DIP2 extra payload size")
-        position += varint_size
+        self.position += varint_size
+        self.payload_content_start = self.position
         self.type = dip2_type
         self.testnet = testnet
         self.inputs_hash = inputs_hash
         self.confirmations = []
-        self._parse(data, position)
 
     def tx_name(self):
         if self.type == 1:
@@ -176,31 +198,31 @@ class SpecialTx:
             return 'Close BU Account Subscription Transaction'
         raise ProcessError("Unknown Dash DIP2 transaction type")
 
-    def _parse(self, data, position):
+    async def parse(self):
         if self.type == 1:
-            self._parse_pro_reg_tx(data, position)
+            await self.parse_pro_reg_tx(self.payload, self.position)
         elif self.type == 2:
-            self._parse_pro_up_serv_tx(data, position)
+            self._parse_pro_up_serv_tx(self.payload, self.position)
         elif self.type == 3:
-            self._parse_pro_up_reg_tx(data, position)
+            self._parse_pro_up_reg_tx(self.payload, self.position)
         elif self.type == 4:
-            self._parse_pro_up_rev_tx(data, position)
+            self._parse_pro_up_rev_tx(self.payload, self.position)
         elif self.type == 5:
-            self._parse_cb_tx(data, position)
+            self._parse_cb_tx(self.payload, self.position)
         elif self.type == 6:
-            self._parse_qm_tx(data, position)
+            self._parse_qm_tx(self.payload, self.position)
         elif self.type == 8:
-            self._parse_bu_reg_tx(data, position)
+            self._parse_bu_reg_tx(self.payload, self.position)
         elif self.type == 9:
-            self._parse_bu_credit_tx(data, position)
+            self._parse_bu_credit_tx(self.payload, self.position)
         elif self.type == 10:
-            self._parse_bu_reset_tx(data, position)
+            self._parse_bu_reset_tx(self.payload, self.position)
         elif self.type == 11:
-            self._parse_bu_close_tx(data, position)
+            self._parse_bu_close_tx(self.payload, self.position)
         else:
             raise ProcessError("Unknown Dash DIP2 transaction type")
 
-    def _parse_pro_reg_tx(self, data, position):
+    async def parse_pro_reg_tx(self, data, position):
         version = unpack("<H", data[position:position + 2])[0]
         if not version == 1:
             raise ProcessError("Unknown Dash Provider Register format version")
@@ -238,7 +260,7 @@ class SpecialTx:
         self.confirmations.extend([("Voting address", voting_address)])
         operator_reward = unpack("<H", data[position:position+2])[0]
         if operator_reward > 10000:
-            raise ProcessError("Invalid oerator reward in ProRegTx")
+            raise ProcessError("Invalid operator reward in ProRegTx")
         position += 2
         self.confirmations.extend([("Operator reward",
                                     "{:.2f}%".format(operator_reward / 100.0))])
@@ -251,6 +273,7 @@ class SpecialTx:
         if bytes(reversed(data[position:position + 32])) != self.inputs_hash:
             raise ProcessError("Invalid inputs hash in DIP2 transaction")
         position += 32
+        payload_content_end = position
         varint_size = _varint_size(data[position:position + 8])
         payload_sig_size = _unpack_varint(data[position:position + varint_size])
         position += varint_size
@@ -262,15 +285,19 @@ class SpecialTx:
             raise ProcessError("No payload signature for external collateral")
         if payload_sig_size > 0:
             payload_sig = data[position:position + payload_sig_size]
-            digest = self._get_proregtx_digest()
+            res = payout_address + "|" + str(operator_reward) + "|" + \
+                  owner_address + "|" + voting_address + "|"
+
+            data_hash = sha256(sha256(data[self.payload_content_start:payload_content_end]).digest()).digest()
+            res += _to_hex(data_hash)
+            digest = message_digest(self.coin, res)
             key_from_sig = secp256k1.verify_recover(payload_sig, digest)
             if not key_from_sig:
                 raise ProcessError("Invalid payload signature")
-            address_from_sig = _address_from_pubkey(key_from_sig)
-            address_from_txout = _address_from_txout(collateral_out)
+            address_from_sig = _addr_from_pubkey(key_from_sig, self.testnet)
+            address_from_txout = await _addr_from_txout(collateral_id, collateral_out, self.testnet)
             if address_from_sig != address_from_txout:
                 raise ProcessError("Invalid payload signature")
-
 
     def _parse_pro_up_serv_tx(self, data, position):
         version = unpack("<H", data[position:position + 2])[0]
@@ -295,6 +322,8 @@ class SpecialTx:
             payout_address = _address_from_script(data[position:position + payout_script_size], self.testnet)
         position += payout_script_size
         self.confirmations.extend([("Payout address", payout_address)])
+        print("Received hash: ", _to_hex(data[position:position + 32]))
+        print("Calculated hash:", _to_hex(bytes(reversed(self.inputs_hash))))
         if bytes(reversed(data[position:position + 32])) != self.inputs_hash:
             raise ProcessError("Invalid inputs hash in DIP2 transaction")
         position += 32
@@ -326,6 +355,8 @@ class SpecialTx:
             payout_address = _address_from_script(data[position:position + payout_script_size], self.testnet)
         position += payout_script_size
         self.confirmations.extend([("Payout address", payout_address)])
+        print("Received hash: ", _to_hex(data[position:position + 32]))
+        print("Calculated hash:", _to_hex(bytes(reversed(self.inputs_hash))))
         if bytes(reversed(data[position:position + 32])) != self.inputs_hash:
             raise ProcessError("Invalid inputs hash in DIP2 transaction")
         position += 32
@@ -341,6 +372,8 @@ class SpecialTx:
         reason = unpack("<H", data[position:position + 2])[0]
         position += 2
         self.confirmations.extend([("Revoke reason", _revoke_reason(reason))])
+        print("Received hash: ", _to_hex(data[position:position + 32]))
+        print("Calculated hash:", _to_hex(bytes(reversed(self.inputs_hash))))
         if bytes(reversed(data[position:position + 32])) != self.inputs_hash:
             raise ProcessError("Invalid inputs hash in DIP2 transaction")
         position += 32
@@ -400,10 +433,11 @@ async def request_dip2_extra_payload(tx_req):
 
 
 # Used to explicitly verify or to confirm by user all specific transaction details
-def confirm_dip2_tx_payload(data, tx, inputs_hash):
+async def confirm_dip2_tx_payload(data, tx, inputs_hash):
     dip2_type = _dip2_tx_type(tx)
     testnet = _is_testnet(tx)
-    tx = SpecialTx(data, dip2_type, testnet, inputs_hash)
+    tx = SpecialTx(data, dip2_type, testnet, coins.by_name(tx.coin_name), inputs_hash)
+    await tx.parse()
     yield UIConfirmTxDetail("Confirm this is", tx.tx_name())
     for c in tx.confirmations:
         yield UIConfirmTxDetail(c[0], c[1])
