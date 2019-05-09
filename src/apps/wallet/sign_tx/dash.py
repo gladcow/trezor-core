@@ -9,8 +9,6 @@ from trezor.crypto.base58 import encode_check
 from trezor.crypto.curve import secp256k1
 from trezor.crypto.hashlib import ripemd160, sha256
 from apps.common.signverify import message_digest
-from trezor.messages.TxOutputBinType import TxOutputBinType
-from trezor.messages.TxOutputType import TxOutputType
 from trezor.messages.TxRequest import TxRequest
 from trezor.messages.TxRequestDetailsType import TxRequestDetailsType
 from apps.common import coininfo, coins
@@ -22,6 +20,7 @@ from apps.common.confirm import (
 )
 from apps.wallet.sign_tx import (
     helpers,
+    addresses
 )
 
 
@@ -68,30 +67,6 @@ def _inet_ntoa(data: bytes) -> str:
     return ".".join('{}'.format(data[i]) for i in [12, 13, 14, 15])
 
 
-def _addr_from_keyid(data: bytes, testnet: bool) -> str:
-    if testnet:
-        prefix = b'\x8c'
-    else:
-        prefix = b'\x4c'
-    addr_data = prefix + data[0:20]
-    return encode_check(addr_data)
-
-
-def _addr_from_pubkey(data: bytes, testnet:bool) ->str:
-    keyid = ripemd160(sha256(data).digest()).digest()
-    print("KeyID :", _to_hex(keyid))
-    return _addr_from_keyid(keyid, testnet)
-
-
-def _addr_from_sh(data: bytes, testnet: bool) -> str:
-    if testnet:
-        prefix = b'\x13'
-    else:
-        prefix = b'\x10'
-    addr_data = prefix + data[0:20]
-    return encode_check(addr_data)
-
-
 def _is_p2pkh_script(data: bytes) -> bool:
     if not len(data) == 25:
         return False
@@ -111,28 +86,28 @@ def _is_p2pkh_script(data: bytes) -> bool:
 def _is_p2sh_script(data: bytes) -> bool:
     if not len(data) == 23:
         return False
-    if not data[1] == 0xa9:
+    if not data[0] == 0xa9:
         return False
-    if not data[2] == 0x14:
+    if not data[1] == 0x14:
         return False
     if not data[-1] == 0x88:
         return False
     return True
 
 
-def _address_from_script(data: bytes, testnet: bool) -> str:
+def _address_from_script(data: bytes, coin: coininfo.CoinInfo) -> str:
     if _is_p2pkh_script(data):
-        return _addr_from_keyid(data[3:23], testnet)
+        return addresses.address_pkh_from_keyid(data[3:23], coin)
     if _is_p2sh_script(data):
-        return _addr_from_sh(data[2:22], testnet)
+        return addresses.address_p2sh(data[2:22], coin)
     raise ProcessError("Unsupported payout script type")
 
 
-async def _addr_from_txout(tx_id: str, tx_out: int, testnet: bool) -> str:
+async def _addr_from_txout(tx_id: str, tx_out: int, coin: coininfo.CoinInfo) -> str:
     tx_req = TxRequest()
     tx_req.details = TxRequestDetailsType()
     txo = await helpers.request_tx_output(tx_req, tx_out, unhexlify(tx_id))
-    return _address_from_script(txo.script_pubkey, testnet)
+    return _address_from_script(txo.script_pubkey, coin)
 
 
 # masternode registration revoke reason for user confirmation
@@ -249,13 +224,13 @@ class SpecialTx:
         position += 2
         self.confirmations.extend([("Address and port",
                                     "{}:{}".format(ip, port))])
-        owner_address = _addr_from_keyid(data[position:position + 20], self.testnet)
+        owner_address = addresses.address_pkh_from_keyid(data[position:position + 20], self.coin)
         position += 20
         self.confirmations.extend([("Owner address", owner_address)])
         self.confirmations.extend([("Operator Public Key",
                                     _to_hex(data[position:position + 48]))])
         position += 48
-        voting_address = _addr_from_keyid(data[position:position + 20], self.testnet)
+        voting_address = addresses.address_pkh_from_keyid(data[position:position + 20], self.coin)
         position += 20
         self.confirmations.extend([("Voting address", voting_address)])
         operator_reward = unpack("<H", data[position:position+2])[0]
@@ -267,7 +242,7 @@ class SpecialTx:
         varint_size = _varint_size(data[position:position + 8])
         payout_script_size = _unpack_varint(data[position:position + varint_size])
         position += varint_size
-        payout_address = _address_from_script(data[position:position + payout_script_size], self.testnet)
+        payout_address = _address_from_script(data[position:position + payout_script_size], self.coin)
         position += payout_script_size
         self.confirmations.extend([("Payout address", payout_address)])
         if bytes(reversed(data[position:position + 32])) != self.inputs_hash:
@@ -294,8 +269,8 @@ class SpecialTx:
             key_from_sig = secp256k1.verify_recover(payload_sig, digest)
             if not key_from_sig:
                 raise ProcessError("Invalid payload signature")
-            address_from_sig = _addr_from_pubkey(key_from_sig, self.testnet)
-            address_from_txout = await _addr_from_txout(collateral_id, collateral_out, self.testnet)
+            address_from_sig = addresses.address_pkh(key_from_sig, self.coin)
+            address_from_txout = await _addr_from_txout(collateral_id, collateral_out, self.coin)
             if address_from_sig != address_from_txout:
                 raise ProcessError("Invalid payload signature")
 
@@ -319,7 +294,7 @@ class SpecialTx:
         if payout_script_size == 0:
             payout_address = "Empty"
         else:
-            payout_address = _address_from_script(data[position:position + payout_script_size], self.testnet)
+            payout_address = _address_from_script(data[position:position + payout_script_size], self.coin)
         position += payout_script_size
         self.confirmations.extend([("Payout address", payout_address)])
         print("Received hash: ", _to_hex(data[position:position + 32]))
@@ -343,7 +318,7 @@ class SpecialTx:
         self.confirmations.extend([("Operator Public Key",
                                     _to_hex(data[position:position + 48]))])
         position += 48
-        voting_address = _addr_from_keyid(data[position:position + 20], self.testnet)
+        voting_address = addresses.address_pkh_from_keyid(data[position:position + 20], self.coin)
         position += 20
         self.confirmations.extend([("Voting address", voting_address)])
         varint_size = _varint_size(data[position:position + 8])
@@ -352,7 +327,7 @@ class SpecialTx:
         if payout_script_size == 0:
             payout_address = "Empty"
         else:
-            payout_address = _address_from_script(data[position:position + payout_script_size], self.testnet)
+            payout_address = _address_from_script(data[position:position + payout_script_size], self.coin)
         position += payout_script_size
         self.confirmations.extend([("Payout address", payout_address)])
         print("Received hash: ", _to_hex(data[position:position + 32]))
