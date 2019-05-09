@@ -25,6 +25,7 @@ from apps.wallet.sign_tx import (
 
 
 VAR_INT_MAX_SIZE = 8
+_DASH_COIN = 100000000
 
 
 def _dip2_tx_type(tx):
@@ -108,6 +109,13 @@ async def _addr_from_txout(tx_id: str, tx_out: int, coin: coininfo.CoinInfo) -> 
     tx_req.details = TxRequestDetailsType()
     txo = await helpers.request_tx_output(tx_req, tx_out, unhexlify(tx_id))
     return _address_from_script(txo.script_pubkey, coin)
+
+
+async def _verify_collateral_out(tx_id: str, tx_out: int) -> bool:
+    tx_req = TxRequest()
+    tx_req.details = TxRequestDetailsType()
+    txo = await helpers.request_tx_output(tx_req, tx_out, unhexlify(tx_id))
+    return txo.amount == 1000 * _DASH_COIN
 
 
 # masternode registration revoke reason for user confirmation
@@ -216,6 +224,9 @@ class SpecialTx:
         if empty_collateral:
             self.confirmations.extend([("External collateral", "Empty")])
         else:
+            valid = await _verify_collateral_out(collateral_id, collateral_out)
+            if not valid:
+                raise ProcessError("Invalid external collateral")
             self.confirmations.extend([("External collateral",
                                         "{}:{}".format(collateral_id, collateral_out))])
         ip = _inet_ntoa(data[position:position+16])
