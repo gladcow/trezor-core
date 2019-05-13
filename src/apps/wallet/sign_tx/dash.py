@@ -26,6 +26,7 @@ from apps.wallet.sign_tx import (
 
 VAR_INT_MAX_SIZE = 8
 _DASH_COIN = 100000000
+_BLS_SIGNATURE_SIZE = 96
 
 
 def _dip2_tx_type(tx):
@@ -310,11 +311,11 @@ class SpecialTx:
             payout_address = _address_from_script(data[position:position + payout_script_size], self.coin)
         position += payout_script_size
         self.confirmations.extend([("Payout address", payout_address)])
-        print("Received hash: ", _to_hex(data[position:position + 32]))
-        print("Calculated hash:", _to_hex(bytes(reversed(self.inputs_hash))))
         if bytes(reversed(data[position:position + 32])) != self.inputs_hash:
             raise ProcessError("Invalid inputs hash in DIP2 transaction")
         position += 32
+        if position + _BLS_SIGNATURE_SIZE != len(data):
+            raise ProcessError("Invalid payload BLS signature size")
 
     def _parse_pro_up_reg_tx(self, data, position):
         version = unpack("<H", data[position:position + 2])[0]
@@ -343,11 +344,14 @@ class SpecialTx:
             payout_address = _address_from_script(data[position:position + payout_script_size], self.coin)
         position += payout_script_size
         self.confirmations.extend([("Payout address", payout_address)])
-        print("Received hash: ", _to_hex(data[position:position + 32]))
-        print("Calculated hash:", _to_hex(bytes(reversed(self.inputs_hash))))
         if bytes(reversed(data[position:position + 32])) != self.inputs_hash:
             raise ProcessError("Invalid inputs hash in DIP2 transaction")
         position += 32
+        varint_size = _varint_size(data[position:position + 8])
+        payload_sig_size = _unpack_varint(data[position:position + varint_size])
+        position += varint_size
+        if position + payload_sig_size != len(data):
+            raise ProcessError("Invalid payload signature size")
 
     def _parse_pro_up_rev_tx(self, data, position):
         version = unpack("<H", data[position:position + 2])[0]
@@ -360,11 +364,11 @@ class SpecialTx:
         reason = unpack("<H", data[position:position + 2])[0]
         position += 2
         self.confirmations.extend([("Revoke reason", _revoke_reason(reason))])
-        print("Received hash: ", _to_hex(data[position:position + 32]))
-        print("Calculated hash:", _to_hex(bytes(reversed(self.inputs_hash))))
         if bytes(reversed(data[position:position + 32])) != self.inputs_hash:
             raise ProcessError("Invalid inputs hash in DIP2 transaction")
         position += 32
+        if position + _BLS_SIGNATURE_SIZE != len(data):
+            raise ProcessError("Invalid payload BLS signature size")
 
     def _parse_cb_tx(self, data, position):
         raise ProcessError("Unsupported Dash DIP3 transaction type")
