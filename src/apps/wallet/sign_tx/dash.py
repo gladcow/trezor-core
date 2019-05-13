@@ -224,8 +224,10 @@ class SpecialTx:
         if empty_collateral:
             self.confirmations.extend([("External collateral", "Empty")])
         else:
-            valid = await _verify_collateral_out(collateral_id, collateral_out)
-            if not valid:
+            tx_req = TxRequest()
+            tx_req.details = TxRequestDetailsType()
+            collateral_txo = await helpers.request_tx_output(tx_req, collateral_out, unhexlify(collateral_id))
+            if collateral_txo.amount != 1000 * _DASH_COIN:
                 raise ProcessError("Invalid external collateral")
             self.confirmations.extend([("External collateral",
                                         "{}:{}".format(collateral_id, collateral_out))])
@@ -281,7 +283,7 @@ class SpecialTx:
             if not key_from_sig:
                 raise ProcessError("Invalid payload signature")
             address_from_sig = addresses.address_pkh(key_from_sig, self.coin)
-            address_from_txout = await _addr_from_txout(collateral_id, collateral_out, self.coin)
+            address_from_txout = _address_from_script(collateral_txo.script_pubkey, self.coin)
             if address_from_sig != address_from_txout:
                 raise ProcessError("Invalid payload signature")
 
