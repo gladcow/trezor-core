@@ -184,13 +184,13 @@ class SpecialTx:
 
     async def parse(self):
         if self.type == 1:
-            await self.parse_pro_reg_tx(self.payload, self.position)
+            await self._parse_pro_reg_tx(self.payload, self.position)
         elif self.type == 2:
-            self._parse_pro_up_serv_tx(self.payload, self.position)
+            await self._parse_pro_up_serv_tx(self.payload, self.position)
         elif self.type == 3:
-            self._parse_pro_up_reg_tx(self.payload, self.position)
+            await self._parse_pro_up_reg_tx(self.payload, self.position)
         elif self.type == 4:
-            self._parse_pro_up_rev_tx(self.payload, self.position)
+            await self._parse_pro_up_rev_tx(self.payload, self.position)
         elif self.type == 5:
             self._parse_cb_tx(self.payload, self.position)
         elif self.type == 6:
@@ -206,7 +206,7 @@ class SpecialTx:
         else:
             raise ProcessError("Unknown Dash DIP2 transaction type")
 
-    async def parse_pro_reg_tx(self, data, position):
+    async def _parse_pro_reg_tx(self, data, position):
         version = unpack("<H", data[position:position + 2])[0]
         if not version == 1:
             raise ProcessError("Unknown Dash Provider Register format version")
@@ -288,14 +288,19 @@ class SpecialTx:
             if address_from_sig != address_from_txout:
                 raise ProcessError("Invalid payload signature")
 
-    def _parse_pro_up_serv_tx(self, data, position):
+    async def _parse_pro_up_serv_tx(self, data, position):
         version = unpack("<H", data[position:position + 2])[0]
         if not version == 1:
             raise ProcessError("Unknown Dash Provider Update Service format version")
         position += 2
-        initial_proregtx = _to_hex(reversed(data[position:position + 32]))
+        initial_proregtx_id = bytes(reversed(data[position:position + 32]))
         position += 32
-        self.confirmations.extend([("Initial ProRegTx", initial_proregtx)])
+        tx_req = TxRequest()
+        tx_req.details = TxRequestDetailsType()
+        proregtx = await helpers.request_tx_meta(tx_req, initial_proregtx_id)
+        if proregtx.version != ((1 << 16) | 3):
+            raise ProcessError("Invalid ProRegTx")
+        self.confirmations.extend([("Initial ProRegTx", _to_hex(initial_proregtx_id))])
         ip = _inet_ntoa(data[position:position+16])
         position += 16
         port = unpack(">H", data[position:position+2])[0]
@@ -317,14 +322,19 @@ class SpecialTx:
         if position + _BLS_SIGNATURE_SIZE != len(data):
             raise ProcessError("Invalid payload BLS signature size")
 
-    def _parse_pro_up_reg_tx(self, data, position):
+    async def _parse_pro_up_reg_tx(self, data, position):
         version = unpack("<H", data[position:position + 2])[0]
         if not version == 1:
             raise ProcessError("Unknown Dash Provider Update Registrar format version")
         position += 2
-        initial_proregtx = _to_hex(reversed(data[position:position + 32]))
+        initial_proregtx_id = bytes(reversed(data[position:position + 32]))
         position += 32
-        self.confirmations.extend([("Initial ProRegTx", initial_proregtx)])
+        tx_req = TxRequest()
+        tx_req.details = TxRequestDetailsType()
+        proregtx = await helpers.request_tx_meta(tx_req, initial_proregtx_id)
+        if proregtx.version != ((1 << 16) | 3):
+            raise ProcessError("Invalid ProRegTx")
+        self.confirmations.extend([("Initial ProRegTx", _to_hex(initial_proregtx_id))])
         mode = unpack("<H", data[position:position + 2])[0]
         position += 2
         self.confirmations.extend([("Masternode mode",
@@ -353,14 +363,19 @@ class SpecialTx:
         if position + payload_sig_size != len(data):
             raise ProcessError("Invalid payload signature size")
 
-    def _parse_pro_up_rev_tx(self, data, position):
+    async def _parse_pro_up_rev_tx(self, data, position):
         version = unpack("<H", data[position:position + 2])[0]
         if not version == 1:
             raise ProcessError("Unknown Dash Provider Update Registrar format version")
         position += 2
-        initial_proregtx = _to_hex(reversed(data[position:position + 32]))
+        initial_proregtx_id = bytes(reversed(data[position:position + 32]))
         position += 32
-        self.confirmations.extend([("Initial ProRegTx", initial_proregtx)])
+        tx_req = TxRequest()
+        tx_req.details = TxRequestDetailsType()
+        proregtx = await helpers.request_tx_meta(tx_req, initial_proregtx_id)
+        if proregtx.version != ((1 << 16) | 3):
+            raise ProcessError("Invalid ProRegTx")
+        self.confirmations.extend([("Initial ProRegTx", _to_hex(initial_proregtx_id))])
         reason = unpack("<H", data[position:position + 2])[0]
         position += 2
         self.confirmations.extend([("Revoke reason", _revoke_reason(reason))])
