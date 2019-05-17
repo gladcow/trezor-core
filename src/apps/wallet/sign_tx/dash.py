@@ -357,11 +357,33 @@ class SpecialTx:
         if bytes(reversed(data[position:position + 32])) != self.inputs_hash:
             raise ProcessError("Invalid inputs hash in DIP2 transaction")
         position += 32
+        payload_content_end = position
         varint_size = _varint_size(data[position:position + 8])
         payload_sig_size = _unpack_varint(data[position:position + varint_size])
         position += varint_size
         if position + payload_sig_size != len(data):
             raise ProcessError("Invalid payload signature size")
+        if payload_sig_size == 0:
+            raise ProcessError("Invalid payload signature size")
+        payload_sig = data[position:position + payload_sig_size]
+        data_hash = sha256(sha256(data[self.payload_content_start:payload_content_end]).digest()).digest()
+        key_from_sig = secp256k1.verify_recover(payload_sig, data_hash)
+        if not key_from_sig:
+            raise ProcessError("Invalid payload signature")
+        keyid_from_sig = self.coin.script_hash(key_from_sig)
+        tx_req = TxRequest()
+        tx_req.details = TxRequestDetailsType()
+        ofs = 0
+        proregtx_payload = bytes()
+        while ofs < proregtx.extra_data_len:
+            size = min(1024, proregtx.extra_data_len - ofs)
+            chunk = await helpers.request_tx_extra_data(tx_req, ofs, size, initial_proregtx_id)
+            proregtx_payload += chunk
+            ofs += len(chunk)
+        ownerkeyid_position = _varint_size(proregtx_payload) + 60
+        owner_keyid = proregtx_payload[ownerkeyid_position:ownerkeyid_position + 20]
+        if keyid_from_sig != owner_keyid:
+            raise ProcessError("Payload signature doesn't match Owner key")
 
     async def _parse_pro_up_rev_tx(self, data, position):
         version = unpack("<H", data[position:position + 2])[0]
