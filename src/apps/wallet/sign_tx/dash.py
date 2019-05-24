@@ -259,7 +259,7 @@ class SpecialTx:
         payout_address = _address_from_script(data[position:position + payout_script_size], self.coin)
         position += payout_script_size
         self.confirmations.extend([("Payout address", payout_address)])
-        if bytes(reversed(data[position:position + 32])) != self.inputs_hash:
+        if data[position:position + 32] != self.inputs_hash:
             raise ProcessError("Invalid inputs hash in DIP2 transaction")
         position += 32
         payload_content_end = position
@@ -276,8 +276,7 @@ class SpecialTx:
             payload_sig = data[position:position + payload_sig_size]
             res = payout_address + "|" + str(operator_reward) + "|" + \
                   owner_address + "|" + voting_address + "|"
-
-            data_hash = sha256(sha256(data[self.payload_content_start:payload_content_end]).digest()).digest()
+            data_hash = bytes(reversed(sha256(sha256(data[self.payload_content_start:payload_content_end]).digest()).digest()))
             res += _to_hex(data_hash)
             digest = message_digest(self.coin, res)
             key_from_sig = secp256k1.verify_recover(payload_sig, digest)
@@ -316,7 +315,7 @@ class SpecialTx:
             payout_address = _address_from_script(data[position:position + payout_script_size], self.coin)
         position += payout_script_size
         self.confirmations.extend([("Payout address", payout_address)])
-        if bytes(reversed(data[position:position + 32])) != self.inputs_hash:
+        if data[position:position + 32] != self.inputs_hash:
             raise ProcessError("Invalid inputs hash in DIP2 transaction")
         position += 32
         if position + _BLS_SIGNATURE_SIZE != len(data):
@@ -354,7 +353,7 @@ class SpecialTx:
             payout_address = _address_from_script(data[position:position + payout_script_size], self.coin)
         position += payout_script_size
         self.confirmations.extend([("Payout address", payout_address)])
-        if bytes(reversed(data[position:position + 32])) != self.inputs_hash:
+        if data[position:position + 32] != self.inputs_hash:
             raise ProcessError("Invalid inputs hash in DIP2 transaction")
         position += 32
         payload_content_end = position
@@ -401,7 +400,7 @@ class SpecialTx:
         reason = unpack("<H", data[position:position + 2])[0]
         position += 2
         self.confirmations.extend([("Revoke reason", _revoke_reason(reason))])
-        if bytes(reversed(data[position:position + 32])) != self.inputs_hash:
+        if data[position:position + 32] != self.inputs_hash:
             raise ProcessError("Invalid inputs hash in DIP2 transaction")
         position += 32
         if position + _BLS_SIGNATURE_SIZE != len(data):
